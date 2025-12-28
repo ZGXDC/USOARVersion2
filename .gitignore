@@ -1,0 +1,14 @@
+#Not include it git repo
+*.dcm
+*.txt
+*.csv
+*.png
+*.PNG
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+.vscode/
