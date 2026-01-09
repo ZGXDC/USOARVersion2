@@ -26,29 +26,38 @@ def dicomToPNG(imagePath, outputPath): #This will save the individual files into
     
     dicomData = pydicom.dcmread(imagePath)
     pixelArray = dicomData.pixel_array
+    
+    #split imagePath name by '/', then splits the
+    imagePathParts = imagePath.split('/')
+    specificImage = imagePathParts[len(imagePathParts)-1].split('.')
      
     print(pixelArray)
     scaled_pixel_array = (np.maximum(pixelArray, 0) / pixelArray.max()) * 255.0
     scaled_pixel_array = np.uint8(scaled_pixel_array)
     
     image = Image.fromarray(scaled_pixel_array)
-    outputPath += '/' + str(dicomData.PatientName) + '.png'
+    outputPath += '/' + str(dicomData.PatientName) + '-'+str(specificImage[0])+'.png'
+
+    print(outputPath)
     image.save(outputPath)
-    
-#outputPath passed to upper function will need to be the folder 
-def directoryIteration(rootDirectoryPath, x):
-#need to iterate through the directory and subdirectories to get each individual file
-    for dirPath, dirNames, filenames in os.walk(rootDirectoryPath):
-        print(dirPath, ' Current Directory')
-        print(dirNames, ' SubDirectories in Current Directory')
-        print(filenames, ' Files names in current directory')
 
+def directoryIteration(directoryPath):
+#want to return an imagePath    
+    imagePathList = []
+    for subdir, dirs, files in os.walk(directoryPath):
+        for f in files:
+            name = os.path.join(subdir,f)
+            imagePathList.append(name)
+    return imagePathList
 
-    
-imagePath = '/home/zgxdc/USOAR/CMMD/CMMD/D1-0001/07-18-2010-NA-NA-79377/1.000000-NA-70244/1-1.dcm'
-outputPath = '/home/zgxdc/USOAR/ConvertedCMMD'
+#gets list of image paths from specific directory
+paths = directoryIteration('/home/zgxdc/USOAR/CMMD/CMMD')
 
-#dicomToPNG(imagePath, outputPath)
-
-directoryIteration('/home/zgxdc/USOAR/CMMD/CMMD', 0)
-
+#converts each path in list of image paths into a png and saves to desired directory
+for p in paths:
+    if(p=='/home/zgxdc/USOAR/CMMD/CMMD/LICENSE' or p=='/home/zgxdc/USOAR/CMMD/CMMD/.DS_Store'):
+        continue
+    if('.DS_Store' in p):
+        continue
+    else:
+        dicomToPNG(p, '/home/zgxdc/USOAR/ConvertedCMMD')

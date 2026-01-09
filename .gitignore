@@ -12,3 +12,6 @@ __pycache__/
 .env
 .DS_Store
 .vscode/
+*.xlsx
+/home/zgxdc/USOAR/CMMD/CMMD/LICENSE
+/home/zgxdc/USOAR/CMMD/CMMD_clinicaldata_revision.xlsx

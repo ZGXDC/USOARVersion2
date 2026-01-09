@@ -20,6 +20,7 @@ from collections import Counter
 from sklearn.metrics import roc_curve, auc
 import numpy as np
 import random
+from torchvision.transforms import v2
 
 #---------------------------------------------------------------------------------------------------------
 #Custom pytorch Dataset
@@ -85,7 +86,7 @@ class rsnaDataset(Dataset):
     def increaseSamples(self, count):
         newImgLabelObject = [] # this should be a list of dictionary objects
         
-        if count != 0 and self.cancerPercent<0.9:
+        if count != 0 and self.cancerPercent<0.75:
             self.cancerPercent += 0.005
             self.nonCancerousPercent -=0.005
         
@@ -199,18 +200,22 @@ trainImagesPNG = loadPNG('/home/zgxdc/USOAR/train_images')
 
 #2) Load/Normalize training/test datasets
 transform = transforms.Compose([
-    transforms.RandomHorizontalFlip(0.7),
+    transforms.RandomHorizontalFlip(0.5),
     transforms.RandomRotation(20),
-    transforms.Normalize((0.485), (0.229))
+    transforms.ElasticTransform(alpha=20.0, sigma=0.4),
+    transforms.v2.GaussianNoise(mean =0.0, sigma = 0.005),
+    transforms.Normalize((0.1390), (0.2200))
 ])
 
-batch_size = 100
+batch_size = 32
 
 trainDataset = rsnaDataset('train_split.csv', '/home/zgxdc/USOAR/train_images', transform)
 trainloader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size, shuffle=True, num_workers=10)
 #/mnt/network/sgrieggs/rsna/train_balanced.csv
 
-#calling increase samples early to get a 50/50 dataset
+#can make a separate file for getting mean and standard deviation/method
+
+# #calling increase samples early to get a 50/50 dataset
 increaseSamplesCount = 0
 trainDataset.increaseSamples(increaseSamplesCount)
 
@@ -251,7 +256,7 @@ optimizer.load_state_dict(checkPoint['optimizerStateDict'])
 for epoch in range(100): #1000 epochs
     running_loss = 0.0
     #sampler = trainDataset.dynamicSampling(epoch)
-    #trainloader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size, shuffle=True, num_workers=10)
+    trainloader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size, shuffle=True, num_workers=10)
     for i, data in enumerate(trainloader, 0):
         inputs, labels = data
         optimizer.zero_grad()
@@ -267,9 +272,9 @@ for epoch in range(100): #1000 epochs
             print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 100:.3f}')
             running_loss = 0.0
             
-            #save model
-    filePath = os.path.join(directoryPath, f'resNet50DS{epoch+1}.pth')
-    torch.save({'epoch': epoch, 'modelStateDict': net.state_dict(), 'optimizerStateDict': optimizer.state_dict()}, filePath)
+    #save model
+    #filePath = os.path.join(directoryPath, f'resNet50DS{epoch+1}.pth')
+    #torch.save({'epoch': epoch, 'modelStateDict': net.state_dict(), 'optimizerStateDict': optimizer.state_dict()}, filePath)
     #run evaluation on each epoch
     eval(testloader, net)
     # call the function in the dataset to add additonal samples, reset dataset, pool percentage of negative samples and posititive samples
