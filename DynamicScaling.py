@@ -2,7 +2,6 @@
 import glob
 import os
 import matplotlib.pyplot as plt
-import cv2
 import torch
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 import torch.utils.data.dataloader
@@ -26,7 +25,12 @@ from torchvision.transforms import v2
 #Custom pytorch Dataset
 class rsnaDataset(Dataset):
     def __init__(self, annotations_file, img_dir, transform=None, target_transform=None):
-        self.img_labels = pd.read_csv(annotations_file).to_dict(orient='records') #change this
+        self.file = annotations_file
+        
+        if annotations_file == 'train_split.csv' or annotations_file=='val_split.csv':
+            self.img_labels = pd.read_csv(annotations_file).to_dict(orient='records') #change this
+        elif annotations_file=='CMMD_clinicaldata_revision.xlsx':
+            self.img_labels = pd.read_excel(annotations_file).to_dict(orient='records')
         
         #get cancer key and see value put them into a list --> make 2 lists of dictionary objects
         self.img_labelCancer = []
@@ -38,13 +42,22 @@ class rsnaDataset(Dataset):
         
         #Splitting labels into positive and negative 
         #Count number of positive and negative labels
-        for label in self.img_labels:
-            if label['cancer'] == 1:
-                self.img_labelCancer.append(label)
-                self.cancerCount+=1
-            else:
-                self.img_labelNoncancerous.append(label)
-                self.nonCancerousCount+=1
+        if annotations_file == 'train_split.csv' or annotations_file=='val_split.csv':
+            for label in self.img_labels:
+                if label['cancer'] == 1:
+                    self.img_labelCancer.append(label)
+                    self.cancerCount+=1
+                else:
+                    self.img_labelNoncancerous.append(label)
+                    self.nonCancerousCount+=1
+        elif annotations_file=='CMMD_clinicaldata_revision.xlsx':
+            for label in self.img_labels:
+                if label['classification']=='Malignant':
+                    self.img_labelCancer.append(label)
+                    self.cancerCount+=1
+                else:
+                    self.img_labelNoncancerous.append(label)
+                    self.nonCancerousCount+=1
               
         #self.img_labels is a dictionary with keys/values compatible to the csv file. Ex: patient_id: 1234
         # for label in self.img_labels:
@@ -59,28 +72,24 @@ class rsnaDataset(Dataset):
 
     def __getitem__(self, idx):
         # img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
-        img_path = os.path.join(self.img_dir, str(self.img_labels[idx]['patient_id']) + "_" + str(self.img_labels[idx]['image_id'])+".png")
-        image = decode_image(img_path)/255.0
-        label =  self.img_labels[idx]['cancer']
+        if self.file == 'train_split.csv' or self.file=='val_split.csv':
+            img_path = os.path.join(self.img_dir, str(self.img_labels[idx]['patient_id']) + "_" + str(self.img_labels[idx]['image_id'])+".png")
+            image = decode_image(img_path)/255.0
+            label =  self.img_labels[idx]['cancer']
+        elif self.file=='CMMD_clinicaldata_revision.xlsx':
+            numImages = self.img_labels[idx]['number']
+            imgNum = random.randint(1,numImages)
+            img_path = os.path.join(self.img_dir, str(self.img_labels[idx]['ID1']) + '-1-'+str(imgNum)+'.png')
+            image = decode_image(img_path)/255.0
+            if self.img_labels[idx]['classification']=='Malignant':
+                label = 1
+            else:
+                label = 0
         if self.transform:
-            image = self.transform(image)
+            image = self.transform(image)     
         if self.target_transform:
             label = self.target_transform(label)
         return image, torch.tensor(label)
-    
-    def dynamicSampling(self, epoch, bias_increment=0.05, max_bias = 0.9):
-        labels = np.array(self.img_labels)
-        num_samples = len(labels) + 10000 #100
-        
-        cancerousBias = min(0.5 + epoch * bias_increment, max_bias)
-        #print(cancerousBias, 'CANCEROUS BIAS')
-        noncancerousBias = 1.0 - cancerousBias
-        #print(noncancerousBias, 'NONCANCEROUS BIAS')
-
-        weights = np.where(labels == 0, noncancerousBias, cancerousBias)
-        weights = weights/weights.sum()
-        
-        return WeightedRandomSampler(weights, num_samples, replacement=True)
     
     #make function called increase negative samples
     def increaseSamples(self, count):
@@ -89,6 +98,35 @@ class rsnaDataset(Dataset):
         if count != 0 and self.cancerPercent<0.75:
             self.cancerPercent += 0.005
             self.nonCancerousPercent -=0.005
+        
+        print(len(self.img_labels))
+        
+        cancerAmount = int(len(self.img_labels) * self.cancerPercent)
+        nonCancerousAmount = int(len(self.img_labels) * self.nonCancerousPercent)
+        
+        print('Cancer Percent', self.cancerPercent)
+        print('Noncancerous Percent', self.nonCancerousPercent)
+        print('Cancer Amount', cancerAmount)
+        print('Noncancerous Amount', nonCancerousAmount)
+        
+        randomGen = 0
+        for i in range(cancerAmount):
+            randomGen = random.randint(0, len(self.img_labelCancer)-1)
+            newImgLabelObject.append(self.img_labelCancer[randomGen])
+            
+        for i in range(nonCancerousAmount):
+            randomGen = random.randint(0, len(self.img_labelNoncancerous)-1)
+            newImgLabelObject.append(self.img_labelNoncancerous[randomGen])
+        
+        random.shuffle(newImgLabelObject)
+        self.img_labels = newImgLabelObject
+    
+    def decreaseSamples(self, count):
+        newImgLabelObject = [] # this should be a list of dictionary objects
+        
+        if count != 0 and self.cancerPercent>0.50:
+            self.cancerPercent -= 0.005
+            self.nonCancerousPercent +=0.005
         
         print(len(self.img_labels))
         
@@ -133,7 +171,6 @@ def loadPNG(dirPath):
             print("ERROR", e)
    
     return imageObjects
-
 
 #---------------------------------------------------------------------------------------------------------------
 #Method to evaluate the model's performance
@@ -200,17 +237,20 @@ trainImagesPNG = loadPNG('/home/zgxdc/USOAR/train_images')
 
 #2) Load/Normalize training/test datasets
 transform = transforms.Compose([
-    transforms.RandomHorizontalFlip(0.5),
+    transforms.RandomHorizontalFlip(0.3),
+    transforms.RandomAffine(0, (0.05,0), scale=None, shear=None),
     transforms.RandomRotation(20),
-    transforms.ElasticTransform(alpha=20.0, sigma=0.4),
-    transforms.v2.GaussianNoise(mean =0.0, sigma = 0.005),
+    transforms.ElasticTransform(alpha=3.0, sigma=0.5),
+    transforms.v2.GaussianNoise(mean =0.0, sigma = 0.01),
+    transforms.Resize((512, 512)),
     transforms.Normalize((0.1390), (0.2200))
 ])
 
 batch_size = 32
 
-trainDataset = rsnaDataset('train_split.csv', '/home/zgxdc/USOAR/train_images', transform)
+trainDataset = rsnaDataset('CMMD_clinicaldata_revision.xlsx', '/home/zgxdc/USOAR/ConvertedCMMD', transform = transform)
 trainloader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size, shuffle=True, num_workers=10)
+
 #/mnt/network/sgrieggs/rsna/train_balanced.csv
 
 #can make a separate file for getting mean and standard deviation/method
@@ -219,7 +259,11 @@ trainloader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size, s
 increaseSamplesCount = 0
 trainDataset.increaseSamples(increaseSamplesCount)
 
-testDataset = rsnaDataset('val_split.csv', '/home/zgxdc/USOAR/train_images', transform)
+#calling decrease samples to get 75/25 dataset (remember to change percents in dataset class)
+# decreaseSamplesCount = 0
+# trainDataset.decreaseSamples(decreaseSamplesCount)
+
+testDataset = rsnaDataset('val_split.csv', '/home/zgxdc/USOAR/train_images', transform = transform)
 testloader = torch.utils.data.DataLoader(testDataset, batch_size=batch_size, shuffle=True, num_workers=10)
 
 #3) Defining the Convolutional Neural Network 
@@ -253,9 +297,8 @@ optimizer.load_state_dict(checkPoint['optimizerStateDict'])
 # #5) Train the network
 # Loop over data iterator, feed inputs to network, and optimize
 
-for epoch in range(100): #1000 epochs
+for epoch in range(50): #1000 epochs
     running_loss = 0.0
-    #sampler = trainDataset.dynamicSampling(epoch)
     trainloader = torch.utils.data.DataLoader(trainDataset, batch_size=batch_size, shuffle=True, num_workers=10)
     for i, data in enumerate(trainloader, 0):
         inputs, labels = data
@@ -273,13 +316,17 @@ for epoch in range(100): #1000 epochs
             running_loss = 0.0
             
     #save model
-    #filePath = os.path.join(directoryPath, f'resNet50DS{epoch+1}.pth')
-    #torch.save({'epoch': epoch, 'modelStateDict': net.state_dict(), 'optimizerStateDict': optimizer.state_dict()}, filePath)
+    # filePath = os.path.join(directoryPath, f'resNet50DSAndNewAugments{epoch+1}.pth')
+    # torch.save({'epoch': epoch, 'modelStateDict': net.state_dict(), 'optimizerStateDict': optimizer.state_dict()}, filePath)
     #run evaluation on each epoch
     eval(testloader, net)
-    # call the function in the dataset to add additonal samples, reset dataset, pool percentage of negative samples and posititive samples
-    trainDataset.increaseSamples(increaseSamplesCount)
-    increaseSamplesCount+=1
+    if epoch!=99:   
+        # call the function in the dataset to add additonal samples, reset dataset, pool percentage of negative samples and posititive samples
+        trainDataset.increaseSamples(increaseSamplesCount)
+        increaseSamplesCount+=1
+        #call the function in the dataset to decrease oversampling, reset dataset,
+        # trainDataset.decreaseSamples(decreaseSamplesCount)
+        # decreaseSamplesCount+=1
     
 print('Finished Training')
 
